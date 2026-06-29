@@ -49,6 +49,15 @@ claude, codex, opencode, and pi are all empirically verified; new harnesses get 
 The verified adapter knowledge - busy signatures, interrupt and exit commands, skill-invocation syntax, and per-harness quirks - lives in [`.agents/skills/harness-adapters/SKILL.md`](../.agents/skills/harness-adapters/SKILL.md).
 Launch mechanics, including the verified command templates, live in [`bin/fm-spawn.sh`](../bin/fm-spawn.sh).
 
+## GitHub account routing (config/gh-accounts)
+
+The `gh` CLI keeps one active account at a time, but the fleet can span repos owned by different GitHub accounts, so a PR operation fails when the wrong account is active.
+`bin/fm-gh.sh` wraps the GitHub CLI: it resolves the target repo's owner - from an explicit `-R owner/repo` (also accepts `host/owner/repo`), otherwise from the `origin` remote of the current repo - looks the owner up in `config/gh-accounts`, and idempotently switches the active account to the mapped one (a `gh`-native operation) before exec'ing the real CLI (`gh-axi` preferred, else `gh`).
+`config/gh-accounts` is captain-local and gitignored; it holds one `owner=account` line per owner that needs a non-default account, where `#` starts a comment, blank lines are ignored, and whitespace around `=` is tolerated.
+Copy the tracked [`config/gh-accounts.example`](../config/gh-accounts.example) to `config/gh-accounts` and edit it; only owners that need a non-default account need a line.
+An unmapped or unresolvable owner is left on the active account with a stderr warning and is never fatal, and all routing chatter stays on stderr so command substitution around `fm-gh.sh` (such as the merge poll) sees only the CLI's own output.
+`bin/fm-pr-check.sh` and `bin/fm-teardown.sh` already route their GitHub lookups this way, and `FM_CONFIG_OVERRIDE` relocates the `config/` directory `fm-gh.sh` reads.
+
 ## Toolchain
 
 On first launch the first mate detects what its required toolchain is missing or too old (tmux, node, gh, treehouse with durable lease support, no-mistakes v1.31.2 or newer, gh-axi, chrome-devtools-axi, lavish-axi), lists it with the exact install commands, and installs only after you say go.
