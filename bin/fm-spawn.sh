@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse worktree, or a secondmate in
 # its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> [harness|launch-command] [--scout]
+# Usage: fm-spawn.sh <task-id> <project-dir> [harness|launch-command] [--scout] [--branch <name>]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [harness|launch-command] --secondmate
 #   With no harness arg, the harness comes from fm-harness.sh crew (config/crew-harness,
 #   falling back to firstmate's own harness). A bare adapter name (claude|codex|
@@ -10,6 +10,10 @@
 #   --scout records kind=scout in the task's meta (report deliverable, scratch worktree;
 #   see AGENTS.md task lifecycle); --secondmate records kind=secondmate and launches in a
 #   provisioned firstmate home; the default is kind=ship.
+#   --branch <name> sets the descriptive work-branch name (slugified to a safe git ref)
+#   recorded as branch=<name> in the task's meta; the crewmate's brief must create that
+#   same branch. Omitted, the branch falls back to fm/<id> (backward compatible). It is a
+#   single-task flag; batch dispatch and --secondmate reject it.
 #   Before a secondmate launch, the home is locally fast-forwarded to the primary
 #   default-branch commit when safe; skipped syncs warn and launch unchanged.
 #   Ship/scout spawns refuse to launch after treehouse get unless the resolved pane
@@ -27,9 +31,9 @@
 #     __PIEXT__    absolute path to state/<task-id>.pi-ext.ts (pi turn-end extension,
 #                  written by this script; outside the worktree to avoid pi's trust gate)
 # Per-harness turn-end hooks are installed automatically; some live outside the worktree.
-# On success prints: spawned <id> harness=<name> kind=<ship|scout|secondmate> mode=<mode> yolo=<on|off> window=<session:window> worktree=<path>
+# On success prints: spawned <id> harness=<name> kind=<ship|scout|secondmate> mode=<mode> yolo=<on|off> branch=<name> window=<session:window> worktree=<path>
 # mode/yolo are resolved per-project from data/projects.md for ship/scout tasks;
-# secondmate spawns record mode=secondmate, yolo=off, home=, and projects=.
+# secondmate spawns record mode=secondmate, yolo=off, home=, and projects= (no branch=).
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -41,17 +45,29 @@ PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
 SUB_HOME_MARKER=".fm-secondmate-home"
 # shellcheck source=bin/fm-ff-lib.sh
 . "$SCRIPT_DIR/fm-ff-lib.sh"
+# shellcheck source=bin/fm-branch-lib.sh
+. "$SCRIPT_DIR/fm-branch-lib.sh"
 # Skip the watcher guard when re-exec'd for one pair of a batch (FM_SPAWN_NO_GUARD is
 # set by the batch loop below), so the guard runs once for the batch, not once per pair.
 [ -n "${FM_SPAWN_NO_GUARD:-}" ] || "$FM_ROOT/bin/fm-guard.sh" || true
 KIND=ship
+BRANCH_ARG=
 POS=()
-for a in "$@"; do
+ALL_ARGS=("$@")
+ai=0
+while [ "$ai" -lt "${#ALL_ARGS[@]}" ]; do
+  a=${ALL_ARGS[$ai]}
   case "$a" in
     --scout) KIND=scout ;;
     --secondmate) KIND=secondmate ;;
+    --branch)
+      ai=$((ai + 1))
+      BRANCH_ARG=${ALL_ARGS[$ai]:-}
+      ;;
+    --branch=*) BRANCH_ARG=${a#--branch=} ;;
     *) POS+=("$a") ;;
   esac
+  ai=$((ai + 1))
 done
 
 # Batch dispatch (see header): when the first positional is an `id=repo` pair, treat every
@@ -63,6 +79,12 @@ done
 idpart=${POS[0]:-}
 idpart=${idpart%%=*}
 if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in */*) false ;; *) true ;; esac; then
+  # --branch is per-task; a batch shares one flag, so applying it would collide branch
+  # names across pairs. Spawn each task individually when it needs a descriptive branch.
+  if [ -n "$BRANCH_ARG" ]; then
+    echo "error: --branch is not supported with batch dispatch; spawn each task individually to name its branch" >&2
+    exit 2
+  fi
   rc=0
   for pair in "${POS[@]}"; do
     case "$pair" in
@@ -85,6 +107,11 @@ ID=${POS[0]}
 PROJ=
 ARG3=
 FIRSTMATE_HOME=
+
+if [ "$KIND" = secondmate ] && [ -n "$BRANCH_ARG" ]; then
+  echo "error: --branch is not valid for --secondmate (a secondmate home has no task branch)" >&2
+  exit 2
+fi
 
 if [ "$KIND" = secondmate ]; then
   case "${POS[1]:-}" in
@@ -454,6 +481,7 @@ fi
 # branch on them. Mode governs ship tasks; a scout's deliverable is a report, not a
 # merge, so scout teardown ignores mode.
 SECONDMATE_PROJECTS=
+BRANCH=
 if [ "$KIND" = secondmate ]; then
   MODE=secondmate
   YOLO=off
@@ -463,6 +491,9 @@ else
   read -r MODE YOLO <<EOF
 $("$FM_ROOT/bin/fm-project-mode.sh" "$PROJ_NAME")
 EOF
+  # Descriptive work-branch name (slugified) recorded in meta; the brief creates it.
+  # Falls back to fm/<id> when no --branch is supplied (backward compatible).
+  BRANCH=$(fm_resolve_branch "$ID" "$BRANCH_ARG")
 fi
 
 mkdir -p "$STATE"
@@ -477,6 +508,8 @@ mkdir -p "$STATE"
   if [ "$KIND" = secondmate ]; then
     echo "home=$PROJ_ABS"
     echo "projects=$SECONDMATE_PROJECTS"
+  else
+    echo "branch=$BRANCH"
   fi
 } > "$STATE/$ID.meta"
 
@@ -494,4 +527,8 @@ tmux send-keys -t "$T" -l "$LAUNCH"
 sleep 0.3
 tmux send-keys -t "$T" Enter
 
-echo "spawned $ID harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO window=$T worktree=$WT"
+if [ "$KIND" = secondmate ]; then
+  echo "spawned $ID harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO window=$T worktree=$WT"
+else
+  echo "spawned $ID harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO branch=$BRANCH window=$T worktree=$WT"
+fi

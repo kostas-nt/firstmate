@@ -30,6 +30,8 @@
 #   (k) no-mistakes + merged PR but HEAD moved afterward        -> REFUSE (stale PR)
 #   (l) no-mistakes + stale origin/main but fetched content     -> ALLOW  (fresh fetch)
 #   (m) fm-pr-check rerun after HEAD moved                      -> no stale pr_head
+#   (n) descriptive (non-fm/) branch pushed to a remote         -> ALLOW  (HEAD-driven)
+#   (o) descriptive (non-fm/) branch, genuinely unlanded        -> REFUSE (safety holds)
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -47,7 +49,7 @@ TMP_ROOT=$(fm_test_tmproot fm-teardown-tests)
 #   $CASE/wt/           - a worktree of the project (the task worktree)
 # Echoes the case dir.
 make_case() {
-  local name=$1 case_dir fakebin
+  local name=$1 branch=${2:-fm/task-x1} case_dir fakebin
   case_dir="$TMP_ROOT/$name"
   fakebin="$case_dir/fakebin"
   mkdir -p "$case_dir/state" "$fakebin"
@@ -97,8 +99,10 @@ SH
   # Clone as the project; give it a `main` branch and an origin/HEAD.
   git clone -q "$case_dir/origin.git" "$case_dir/project"
   git -C "$case_dir/project" remote set-head origin main 2>/dev/null || true
-  # Add a worktree on a fresh task branch; that branch is where the crewmate commits.
-  git -C "$case_dir/project" worktree add -q -b fm/task-x1 "$case_dir/wt" main
+  # Add a worktree on the task branch; that branch is where the crewmate commits.
+  # Defaults to fm/task-x1; descriptive-branch cases pass an explicit name to prove
+  # teardown's safety check reads the live HEAD, not a reconstructed fm/<id>.
+  git -C "$case_dir/project" worktree add -q -b "$branch" "$case_dir/wt" main
 
   # Fresh watcher beacon so fm-guard stays quiet.
   touch "$case_dir/state/.last-watcher-beat"
@@ -175,15 +179,23 @@ land_on_origin_main() {
 }
 
 # Override GitHub lookups to report PR 7 as merged with the supplied head.
+# gh-axi handles teardown's `pr list` branch resolution AND the `pr view` head
+# query that fm-pr-check now routes through fm-gh.sh (gh-axi preferred), so the
+# `headRefOid`/`state,headRefOid` JSON forms return the supplied head here too.
 add_gh_pr_merged_for_head() {
   local case_dir=$1 head=$2
-  cat > "$case_dir/fakebin/gh-axi" <<'SH'
+  cat > "$case_dir/fakebin/gh-axi" <<SH
 #!/usr/bin/env bash
-case "${1:-} ${2:-}" in
+case "\${1:-} \${2:-}" in
   "pr list")
     printf '%s\n' "count: 1 (showing first 1)" "pull_requests[1]{number,state}:" "  7,merged" ; exit 0 ;;
   "pr view")
-    printf '%s\n' "pull_request:" "  number: 7" "  state: merged" '  merged: "2026-06-26T00:00:00Z"' ; exit 0 ;;
+    case " \$* " in
+      *"state,headRefOid"*) printf '%s\t%s\n' 'MERGED' '$head' ; exit 0 ;;
+      *"headRefOid"*) printf '%s\n' '$head' ; exit 0 ;;
+      *) printf '%s\n' "pull_request:" "  number: 7" "  state: merged" ; exit 0 ;;
+    esac
+    ;;
 esac
 exit 0
 SH
@@ -529,6 +541,47 @@ test_local_only_force_overrides_unpushed() {
   pass "local-only worktree with unpushed work is torn down under --force (escape hatch)"
 }
 
+# Descriptive (non-fm/) branch + work pushed to origin: landed, so torn down. Proves
+# the landed-work check follows the live HEAD branch, not a reconstructed fm/<id>.
+test_descriptive_branch_landed_allows() {
+  local case_dir rc
+  case_dir=$(make_case desc-landed gh-account-routing)
+  write_meta "$case_dir" no-mistakes ship
+  printf '%s\n' 'branch=gh-account-routing' >> "$case_dir/state/task-x1.meta"
+  wt_commit "$case_dir" "shippable work"
+  git -C "$case_dir/wt" push -q origin gh-account-routing
+  git -C "$case_dir/project" fetch -q origin
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "desc-landed: teardown should succeed for a pushed descriptive branch"
+  ! grep -q REFUSED "$case_dir/stderr" || fail "desc-landed: teardown printed a REFUSED line"
+  pass "descriptive-branch worktree with work on a remote is torn down (HEAD-driven safety holds)"
+}
+
+# Descriptive (non-fm/) branch + genuinely unlanded work: must still refuse. Proves
+# the safety check is not weakened by the branch rename.
+test_descriptive_branch_unlanded_refuses() {
+  local case_dir rc
+  case_dir=$(make_case desc-unlanded descriptive-feature)
+  write_meta "$case_dir" no-mistakes ship
+  printf '%s\n' 'branch=descriptive-feature' >> "$case_dir/state/task-x1.meta"
+  # Real content, not pushed, no PR (default gh mock), never on origin/main.
+  wt_commit_file "$case_dir" feature.txt hello "unpushed work"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "desc-unlanded: teardown should refuse genuinely unlanded work on a descriptive branch"
+  grep -q REFUSED "$case_dir/stderr" || fail "desc-unlanded: no REFUSED line in stderr"
+  pass "descriptive-branch worktree with genuinely unlanded work is refused (safety preserved)"
+}
+
 test_local_only_fork_remote_allows
 test_teardown_prompts_tasks_axi_done_when_compatible
 test_local_only_truly_unpushed_refuses
@@ -543,3 +596,5 @@ test_content_in_default_fallback_allows
 test_content_fallback_refreshes_stale_origin_ref
 test_dirty_worktree_refuses
 test_gh_error_and_content_absent_refuses
+test_descriptive_branch_landed_allows
+test_descriptive_branch_unlanded_refuses

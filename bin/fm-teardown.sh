@@ -547,6 +547,9 @@ if [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
       # branch. On a gh lookup error work_is_landed falls back to the content check,
       # and if that is also inconclusive it returns false - so we never silently allow
       # teardown of possibly-unlanded work; only genuinely unlanded work is refused.
+      # The branch name comes from the live HEAD, not meta's branch=: the actually
+      # checked-out ref is authoritative, so this stays correct whether the branch is
+      # a descriptive name or the fm/<id> default - the safety check needs no change.
       branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
       if ! work_is_landed "$branch"; then
         echo "REFUSED: worktree $WT has work not on any remote and not landed." >&2
