@@ -24,7 +24,7 @@ set -u
 
 TMP_ROOT=$(fm_test_tmproot fm-branch-name)
 mkdir -p "$TMP_ROOT"
-fm_git_identity
+fm_git_identity fmtest fmtest@example.invalid
 
 # --- fm-branch-lib --------------------------------------------------------------
 

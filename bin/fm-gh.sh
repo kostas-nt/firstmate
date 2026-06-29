@@ -72,7 +72,8 @@ account_for_owner() {
     case "$line" in *=*) ;; *) continue ;; esac
     key=$(printf '%s' "${line%%=*}" | tr -d '[:space:]')
     val=$(printf '%s' "${line#*=}" | tr -d '[:space:]')
-    [ -n "$key" ] && [ -n "$val" ] || continue
+    [ -n "$key" ] || continue
+    [ -n "$val" ] || continue
     if [ "$key" = "$owner" ]; then
       printf '%s\n' "$val"
       return 0

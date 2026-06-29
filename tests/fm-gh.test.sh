@@ -17,7 +17,7 @@ set -u
 
 GH="$ROOT/bin/fm-gh.sh"
 TMP_ROOT=$(fm_test_tmproot fm-gh-tests)
-fm_git_identity
+fm_git_identity fmtest fmtest@example.invalid
 
 # A fakebin with gh + gh-axi. gh answers `auth status` (active = $GH_ACTIVE_FILE)
 # and `auth switch --user X` (records X to $GH_SWITCH_LOG and updates the active
@@ -78,7 +78,7 @@ FAKEBIN_GH_ONLY=$(make_fakebin "$TMP_ROOT/ghonly" no)
 # case can prove fm-gh uses gh when gh-axi is genuinely absent (the test host ships a
 # real gh-axi that would otherwise leak in through the inherited PATH).
 clean_path_without_gh_axi() {
-  local p out= oldifs=$IFS
+  local p out='' oldifs=$IFS
   IFS=:
   # shellcheck disable=SC2086  # deliberate word-split of PATH on ':'
   set -- $PATH
