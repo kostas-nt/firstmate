@@ -41,8 +41,11 @@ gh-account-routing-and-branch-names|gh-account-routing-and-branch-names
 Weird@@Chars!!|weird-chars
 /leading/and/trailing/|leading/and/trailing
 a..b|a.b
+a/./b|a/b
+feat/x.lock|feat/x
+thing.lock.lock|thing
 ROWS
-  pass "fm_branch_slug: lowercases, maps unsafe chars, collapses '..'//, trims separators"
+  pass "fm_branch_slug: lowercases, maps unsafe chars, collapses '..'//, trims separators and '.lock'"
 }
 
 test_resolve_branch_fallback() {

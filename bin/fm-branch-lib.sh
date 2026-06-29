@@ -14,19 +14,22 @@
 # fm_branch_slug <raw>: echo a conservative, valid git branch ref derived from <raw>.
 # Lowercases, maps every char outside [a-z0-9._/-] to '-', then collapses and trims
 # the sequences git check-ref-format forbids ('..', '//', leading/trailing '-./',
-# and '/.'/'./'). Echoes the empty string when <raw> slugifies to nothing, so callers
-# fall back to the fm/<id> default.
+# '/.'/'./', and a trailing '.lock'). Echoes the empty string when <raw> slugifies to
+# nothing, so callers fall back to the fm/<id> default.
 fm_branch_slug() {
   local s
   s=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | LC_ALL=C tr -c 'a-z0-9._/-' '-')
   s=$(printf '%s' "$s" | sed \
     -e 's/\.\.*/./g' \
-    -e 's#//*#/#g' \
     -e 's/--*/-/g' \
     -e 's#/\.#/#g' \
     -e 's#\./#/#g' \
-    -e 's#^[-./]*##' \
-    -e 's#[-./]*$##')
+    -e 's#//*#/#g' \
+    -e 's#^[-./][-./]*##' \
+    -e ':t' \
+    -e 's#[-./][-./]*$##' \
+    -e 's#\.lock$##' \
+    -e 'tt')
   printf '%s' "$s"
 }
 
