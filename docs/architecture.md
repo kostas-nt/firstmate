@@ -39,6 +39,10 @@ Its injection path shares `bin/fm-tmux-lib.sh` with `fm-send.sh`, so dim-ghost-a
 Crewmates never intentionally touch your project clone; [treehouse](https://github.com/kunchenguid/treehouse) pools clean worktrees so parallel tasks on one repo cannot collide.
 For ship and scout work, `fm-spawn.sh` waits for `treehouse get` and then refuses to launch unless the pane resolves to a real git worktree root that is distinct from the project primary checkout.
 
+A ship task works on its own branch, named descriptively and decoupled from the internal task id so the id and its random suffix never leak onto PRs or branch lists.
+`fm-spawn.sh --branch <name>` records the slugified name as `branch=` in the task's meta and `fm-brief.sh --branch <name>` writes it into the crewmate's branch-creation step; with no flag both fall back to `fm/<id>`, so the no-flag path stays backward compatible.
+The consumers (`fm-review-diff.sh`, `fm-merge-local.sh`, and the ship instructions `fm-promote.sh` prints) read `branch=` from meta with the same `fm/<id>` fallback for in-flight tasks predating the field, while teardown's landed-work safety check reads the live branch from the worktree HEAD instead, so it stays correct for any branch name.
+
 The firstmate repo has one extra exposure because it can dispatch crewmates to work on itself.
 Its operating checkout (`FM_ROOT`) and the disposable crewmate worktrees are all linked git worktrees of the same repository, so the valid discriminator is branch state, not whether the checkout is linked.
 The primary checkout is healthy on its default branch, and linked worktrees or secondmate homes are healthy at detached HEAD.
@@ -46,7 +50,7 @@ Only a named non-default branch checked out in `FM_ROOT` is a worktree tangle.
 
 `fm-tangle-lib.sh` resolves the default branch from `origin/HEAD`, then local `main` or `master`, and classifies that named non-default primary branch as the tangle.
 `fm-guard.sh` prints the repair command on the next fleet action, while `fm-bootstrap.sh` reports the same condition as a `TANGLE:` line at session start.
-Ship briefs also tell the crewmate to verify `pwd -P` and `git rev-parse --show-toplevel` before creating `fm/<id>`, then stop with a blocked status if it landed in the primary checkout.
+Ship briefs also tell the crewmate to verify `pwd -P` and `git rev-parse --show-toplevel` before creating its work branch, then stop with a blocked status if it landed in the primary checkout.
 
 ## Two task shapes
 
@@ -84,6 +88,14 @@ The `data/secondmates.md` line schema and the secondmate environment variables a
 Teardown is fail-closed for ship worktrees: dirty worktrees refuse, and committed work must be landed before the worktree is returned.
 Landed work is accepted when `HEAD` is reachable from any remote-tracking branch, when a PR for the current `HEAD` is merged, or when the worktree content is already present in the freshly fetched default branch.
 That content check lets a squash-merged PR whose head branch was deleted tear down cleanly without using `--force`; `local-only` work instead tears down after the approved local default-branch merge or after the branch is pushed to any remote.
+
+## GitHub operations route to the owning account
+
+The fleet can span repos owned by different GitHub accounts, but the `gh` CLI has one active account at a time, so a PR operation fails when the wrong account is active.
+`bin/fm-gh.sh` wraps the GitHub CLI and routes per repo: it resolves the target repo's owner from an explicit `-R owner/repo` or the current repo's `origin` remote, looks the owner up in the captain-local `config/gh-accounts` map, and idempotently switches the active account to the owning one before exec'ing the real CLI (`gh-axi` preferred, else `gh`).
+An unmapped or unresolvable owner is left on the active account with a stderr warning and is never fatal, and routing chatter stays on stderr so command substitution around the wrapper (such as the merge poll) sees only the CLI's own output.
+`bin/fm-pr-check.sh` (its head verification and the generated merge poll) and `bin/fm-teardown.sh` (the PR-merged landed-work check) route their GitHub lookups through it.
+The `config/gh-accounts` format is documented in [configuration.md](configuration.md).
 
 ## Optional X mode
 

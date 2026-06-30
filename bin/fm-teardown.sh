@@ -81,23 +81,25 @@ meta_value() {
   grep "^$key=" "$meta" | cut -d= -f2- || true
 }
 
-# Resolve the PR number for a worktree branch via gh-axi. Echoes the number on a
-# single match and returns 0; returns non-zero on no match or any lookup failure,
-# so the caller treats it as "no PR found" (fail-safe).
+# Resolve the PR number for a worktree branch, routing the lookup through fm-gh.sh so
+# it runs under the repo's owning gh account. Echoes the number on a single match and
+# returns 0; returns non-zero on no match or any lookup failure, so the caller treats
+# it as "no PR found" (fail-safe).
 pr_number_from_branch() {
   local branch=$1 out n
   [ -n "$branch" ] && [ "$branch" != HEAD ] || return 1
-  out=$( cd "$WT" && gh-axi pr list --state all --head "$branch" --limit 1 2>/dev/null ) || return 1
+  out=$( cd "$WT" && "$FM_ROOT/bin/fm-gh.sh" pr list --state all --head "$branch" --limit 1 2>/dev/null ) || return 1
   n=$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*\([0-9][0-9]*\),.*/\1/p' | head -1)
   [ -n "$n" ] || return 1
   printf '%s' "$n"
 }
 
 # Is the worktree's PR merged for this exact HEAD? Resolves the PR from the
-# recorded pr= URL first, then from the branch name, and asks GitHub for both the
-# PR state and head. Returns non-zero when the PR is not merged, the current HEAD
-# is not the PR head, no PR is found, or any gh error occurs - the caller then
-# falls back to the content check.
+# recorded pr= URL first, then from the branch name, and asks GitHub (via fm-gh.sh,
+# so the query runs under the repo's owning gh account) for both the PR state and
+# head. Returns non-zero when the PR is not merged, the current HEAD is not the PR
+# head, no PR is found, or any gh error occurs - the caller then falls back to the
+# content check.
 pr_is_merged() {
   local branch=$1 target view state head current
   if [ -n "$PR_URL" ]; then
@@ -106,7 +108,7 @@ pr_is_merged() {
     target=$(pr_number_from_branch "$branch") || return 1
   fi
   [ -n "$target" ] || return 1
-  view=$(cd "$WT" && gh pr view "$target" --json state,headRefOid -q '.state + "\t" + .headRefOid' 2>/dev/null) || return 1
+  view=$(cd "$WT" && "$FM_ROOT/bin/fm-gh.sh" pr view "$target" --json state,headRefOid -q '.state + "\t" + .headRefOid' 2>/dev/null) || return 1
   state=${view%%$'\t'*}
   head=${view#*$'\t'}
   [ "$state" != "$view" ] || return 1
@@ -547,6 +549,9 @@ if [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
       # branch. On a gh lookup error work_is_landed falls back to the content check,
       # and if that is also inconclusive it returns false - so we never silently allow
       # teardown of possibly-unlanded work; only genuinely unlanded work is refused.
+      # The branch name comes from the live HEAD, not meta's branch=: the actually
+      # checked-out ref is authoritative, so this stays correct whether the branch is
+      # a descriptive name or the fm/<id> default - the safety check needs no change.
       branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
       if ! work_is_landed "$branch"; then
         echo "REFUSED: worktree $WT has work not on any remote and not landed." >&2

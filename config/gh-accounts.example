@@ -1,0 +1,23 @@
+# config/gh-accounts - per-repo GitHub account routing for bin/fm-gh.sh.
+#
+# Copy this file to config/gh-accounts (which is LOCAL and gitignored) and edit it.
+# The real map is captain-local: it names your accounts, so it is never committed.
+#
+# The gh CLI keeps one active account at a time, but the fleet spans repos owned by
+# different accounts. fm-gh.sh resolves the owner of the target repo - from an
+# explicit `-R owner/repo`, otherwise from the `origin` remote of the current repo -
+# looks the owner up here, and switches the active gh account to the mapped one
+# (idempotently) before running the command.
+#
+# Format: one `owner=account` per line.
+#   owner    the repo owner as it appears in the URL: github.com/OWNER/repo
+#   account  the gh username to switch to, as shown by `gh auth status`
+# `#` starts a comment; blank lines are ignored. Whitespace around `=` is tolerated.
+# An owner with no line here is left on whatever account is active (fm-gh warns, but
+# never fails), so only list owners that need a non-default account.
+#
+# Example - a work org and the firstmate fork live under one account, an NLP org
+# under another:
+# acme-web=alice-work
+# alice=alice-work
+# nlp-platform=alice-research
